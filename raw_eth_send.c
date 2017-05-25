@@ -26,6 +26,27 @@ struct _arp_hdr {
   uint8_t target_ip[4];
 };
 
+int getip(char *ifname, char *sender_ip){
+	int fd;
+	struct ifreq ifr;
+
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	/* I want to get an IPv4 IP address */
+	ifr.ifr_addr.sa_family = AF_INET;
+
+	/* I want IP address attached to "eth0" */
+	strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
+
+	ioctl(fd, SIOCGIFADDR, &ifr);
+
+	close(fd);
+
+	sprintf(sender_ip, "%s", inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr));
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	int fd;
@@ -118,28 +139,29 @@ int main(int argc, char *argv[])
 	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
 	
 	int i;
-	char network_t[7] = "10.0.0";
-	char target_ip_string[20];
-	char append[3] = "000";
-	for(i=0; i < 255; i++){
-		
-		//aloca um espaço de memória
-		target_ip_string = malloc(20);
+	char sender_ip[15];
+	char target_ip[15];
 
-		//converte int to char
-		sprintf(append,"%d", i);
+	char network[15] = "10.0.0.";
+	char host [3];
 
-		//copia começo do ip para o atributo
-		strcpy(target_ip_string, "10.0.0.20.");
+	// get sender ip
+	getip(ifname, sender_ip);
+	printf("sender: %s\n", sender_ip);
+	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
 
-		//concatena o final do ip
-		strcat(target_ip_string, append);
-		
-		//DEBUG
-		printf("IP_TARGET:%s\n", target_ip_string);
-		
-		inet_pton (AF_INET, target_ip_string, &arphdr.target_ip);
-		
+	for(i=1; i < 255; i++){
+
+		memset(host, 0, sizeof(host));
+		sprintf(host, "%d", i);
+
+		memset(target_ip, 0, sizeof(target_ip));
+		strcat(target_ip, network);
+		strcat(target_ip, host);
+
+		printf("target: %s\n", target_ip);
+		inet_pton (AF_INET, target_ip, &arphdr.target_ip);
+
 		memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
 		frame_len += ARP_HDRLEN;
 
