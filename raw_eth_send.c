@@ -138,6 +138,7 @@ int main(int argc, char *argv[])
 	/* Target hardware address (48 bits): zero, since we don't know it yet. */
 	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
 	
+	// help vars for multiple sends
 	int i;
 	char sender_ip[15];
 	char target_ip[15];
@@ -151,10 +152,11 @@ int main(int argc, char *argv[])
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
 
 	for(i=1; i < 255; i++){
-
+		// set host number
 		memset(host, 0, sizeof(host));
 		sprintf(host, "%d", i);
 
+		// concat network + host number
 		memset(target_ip, 0, sizeof(target_ip));
 		strcat(target_ip, network);
 		strcat(target_ip, host);
