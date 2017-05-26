@@ -93,7 +93,7 @@ int getrangeip(char *ifname){
 
 		//percorre os bits
 		for (i = 0; i < CHAR_BIT; ++i) {
-	  		//salva em um aray de interiros
+	  		//salva em um array de interiros
 	  		output[i] = (bytes[pos] >> i) & 1;
 	
 			if(IF_DEBUG){
@@ -110,7 +110,7 @@ int getrangeip(char *ifname){
 
 	if(IF_DEBUG){
     	printf("\n");
-		printf("sub-sede: %d \n",potencia(2,range));
+		printf("sub-rede: %d \n",potencia(2,range));
 		printf("total hosts: %d \n",range);
     }
 
@@ -238,16 +238,15 @@ int main(int argc, char *argv[])
 	// help vars for multiple sends
 	int i = 0;
 	int range_host = 0;
-	int ip = 0;
+	int s_ip = 0;
 	char sender_ip[15];
 	char target_ip[15];
 
-	char network[15] = "10.0.0.";
 	char host [3];
 	unsigned char target_byte[4];
 
 	// get sender ip
-	ip = getip(ifname, sender_ip);
+	s_ip = getip(ifname, sender_ip);
 
 	//get renge hosts
 	range_host = getrangeip(ifname);
@@ -255,30 +254,19 @@ int main(int argc, char *argv[])
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
 
 	//ip destinatário fateado
-    target_byte[0] = ip & 0xFF;
-    target_byte[1] = (ip >> 8) & 0xFF;
-    target_byte[2] = (ip >> 16) & 0xFF;
-    target_byte[3] = (ip >> 24) & 0xFF; 
-
-    if(IF_DEBUG){
-	    printf("IP DESTINO FATEADO : %d . %d . %d . %d \n ", target_byte[0], target_byte[1],target_byte[2],target_byte[3]);
-    }
+    target_byte[0] = s_ip & 0xFF;
+    target_byte[1] = (s_ip >> 8) & 0xFF;
+    target_byte[2] = (s_ip >> 16) & 0xFF;
 	
-
 	for(i=1; i < range_host; i++){
 
-		// set host number
-		memset(host, 0, sizeof(host));
-		sprintf(host, "%d", i);
+    	target_byte[3] = i;
 
-		// concat network + host number
-		memset(target_ip, 0, sizeof(target_ip));
-		strcat(target_ip, network);
-		strcat(target_ip, host);
-		
+		// set host number
+		memset(target_ip, 0, sizeof(host));
+		sprintf(target_ip, "%d.%d.%d.%d", target_byte[0],target_byte[1],target_byte[2],target_byte[3]);
 
 		inet_pton (AF_INET, target_ip, &arphdr.target_ip);
-		printf("target: %s\n", target_ip);
 
 		memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
 		frame_len += ARP_HDRLEN;
@@ -290,7 +278,9 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 
-		printf("Pacote enviado.\n");
+		if(IF_DEBUG){
+			printf("Broadcast\tARP\tWho has %s? Tell %s\n", target_ip, sender_ip);
+		}
 		frame_len -= ARP_HDRLEN;
 	}
 
