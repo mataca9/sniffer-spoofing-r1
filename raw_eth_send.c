@@ -143,6 +143,41 @@ int getip(char *ifname, char *sender_ip){
 	return ip;
 }
 
+int setArpTable(char *ip, char *mac){
+	FILE *pFile;
+	pFile = fopen("arp_table.txt", "r+");
+	int found = 0;
+	char line[256];    
+
+	if (pFile) {
+		while (fgets(line, sizeof(line), pFile)) {
+
+			char * str;
+			char line_ip[15];
+			char line_mac[17];
+			str = strtok (line,"\t");
+			strcpy(line_ip, str);
+			str = strtok (NULL, "\t");
+			strcpy(line_mac, str);
+
+			if(strcmp(line_ip, ip) == 0){
+				printf("IP conflict\n");
+				found = 1;
+			}		
+		}
+
+		if(found == 0)		{
+			memset(line, 0, sizeof(line));
+			sprintf(line, "%s\t%s\n", ip, mac);
+			fprintf(pFile, "%s", line);
+		}
+
+		fclose(pFile);
+	}
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	int fd;
@@ -242,7 +277,6 @@ int main(int argc, char *argv[])
 	char sender_ip[15];
 	char target_ip[15];
 
-	char host [3];
 	unsigned char target_byte[4];
 
 	// get sender ip
@@ -263,7 +297,7 @@ int main(int argc, char *argv[])
     	target_byte[3] = i;
 
 		// set host number
-		memset(target_ip, 0, sizeof(host));
+		memset(target_ip, 0, sizeof(target_ip));
 		sprintf(target_ip, "%d.%d.%d.%d", target_byte[0],target_byte[1],target_byte[2],target_byte[3]);
 
 		inet_pton (AF_INET, target_ip, &arphdr.target_ip);
@@ -284,6 +318,58 @@ int main(int argc, char *argv[])
 		frame_len -= ARP_HDRLEN;
 	}
 
+	//clear arp table
+	FILE *pFile;
+	pFile = fopen("arp_table.txt", "w");
+	fclose(pFile);
+
+	printf("Listening to reply packets...\n");
+	while (1) {
+		unsigned char mac_dst[6];
+		unsigned char mac_src[6];
+		//unsigned char *arp;
+		short int e_type;
+		unsigned char ip_sd[4];
+		char sender_mac[17];
+		
+
+		/* Recebe pacotes */
+		if (recv(fd,(char *) &buffer, BUFFER_SIZE, 0) < 0) {
+			perror("recv");
+			close(fd);
+			exit(1);
+		}
+        
+		/* Copia o conteudo do cabecalho Ethernet */
+		memcpy(mac_dst, buffer, sizeof(mac_dst));
+		memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
+		memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
+		e_type = ntohs(e_type);
+		
+		memcpy(ip_sd, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(ip_sd));
+
+		if (htons(e_type) == ethertype) {
+			printf("\n--- Received:\n");
+			printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+                        mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
+
+			memset(sender_mac, 0, sizeof(sender_mac));
+			sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
+			printf("MAC origem:  %s\n", sender_mac);
+
+			printf("EtherType: 0x%04x\n", e_type);
+			
+			memset(sender_ip, 0, sizeof(sender_ip));
+			sprintf(sender_ip, "%d.%d.%d.%d", ip_sd[0], ip_sd[1], ip_sd[2], ip_sd[3]);
+			printf("IP sender: %s\n", sender_ip);
+
+			printf("---\n");
+
+			setArpTable(sender_ip, sender_mac);			
+
+		}
+
+	}
 	
 	close(fd);
 	return 0;
