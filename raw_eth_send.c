@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 	int frame_len = 0;
 	char buffer[BUFFER_SIZE];
 	char dest_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
-	short int ethertype = htons(0x0FFF);
+	short int ethertype = htons(0x0806);
 
 	arp_hdr arphdr;
 
@@ -116,20 +116,45 @@ int main(int argc, char *argv[])
 
 	/* Target hardware address (48 bits): zero, since we don't know it yet. */
 	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
+	
+	int i;
+	char network_t[7] = "10.0.0";
+	char target_ip_string[20];
+	char append[3] = "000";
+	for(i=0; i < 255; i++){
+		
+		//aloca um espaço de memória
+		target_ip_string = malloc(20);
 
-	// ARP header
-  	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
-	frame_len += ARP_HDRLEN;
+		//converte int to char
+		sprintf(append,"%d", i);
 
-	/* Envia pacote */
-	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
-		perror("send");
-		close(fd);
-		exit(1);
+		//copia começo do ip para o atributo
+		strcpy(target_ip_string, "10.0.0.20.");
+
+		//concatena o final do ip
+		strcat(target_ip_string, append);
+		
+		//DEBUG
+		printf("IP_TARGET:%s\n", target_ip_string);
+		
+		inet_pton (AF_INET, target_ip_string, &arphdr.target_ip);
+		
+		memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
+		frame_len += ARP_HDRLEN;
+
+		/* Envia pacote */
+		if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+			perror("send");
+			close(fd);
+			exit(1);
+		}
+
+		printf("Pacote enviado.\n");
+		frame_len -= ARP_HDRLEN;
 	}
 
-	printf("Pacote enviado.\n");
-
+	
 	close(fd);
 	return 0;
 }
