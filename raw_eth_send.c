@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <math.h>
+#include <limits.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <netinet/ether.h>
@@ -12,6 +14,13 @@
 #define BUFFER_SIZE 1600
 #define MAX_DATA_SIZE 1500
 #define ARP_HDRLEN 28
+#define IF_DEBUG 1
+
+#define INT_TO_ADDR(_addr) \
+(_addr & 0xFF), \
+(_addr >> 8 & 0xFF), \
+(_addr >> 16 & 0xFF), \
+(_addr >> 24 & 0xFF)
 
 typedef struct _arp_hdr arp_hdr;
 struct _arp_hdr {
@@ -26,8 +35,93 @@ struct _arp_hdr {
   uint8_t target_ip[4];
 };
 
+
+int potencia(int base, int expoente){
+	/* Inicializacoes */
+  int potencia = 1;
+  int contador = 0;
+  
+  /* Calculo da potencia */
+  while (contador != expoente) {
+    potencia = potencia * base;
+    contador = contador + 1;
+  }
+
+  return potencia;
+}
+
+
+int getrangeip(char *ifname){
+
+	int mask,fd,i;
+	struct ifreq ifr;
+	int output[32];
+	int pos = 3;
+	int range = 0;
+
+ 	fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	/* I want to get an IPv4 IP address */
+	ifr.ifr_addr.sa_family = AF_INET;
+
+	/* I want IP address attached to "eth0" */
+	strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
+
+ 	ioctl(fd, SIOCGIFNETMASK, &ifr);
+    
+	mask = ((struct sockaddr_in *)(&ifr.ifr_netmask))->sin_addr.s_addr;
+
+	close(fd);
+
+    unsigned char bytes[4];
+    bytes[0] = mask & 0xFF;
+    bytes[1] = (mask >> 8) & 0xFF;
+    bytes[2] = (mask >> 16) & 0xFF;
+    bytes[3] = (mask >> 24) & 0xFF; 
+
+	if(IF_DEBUG){
+		printf("marcara em decimal:\n");
+    	printf("%d.%d.%d.%d\n", bytes[0], bytes[1], bytes[2], bytes[3]);        
+	}
+
+	if(IF_DEBUG){
+    	printf("mascara invertida em binario: \n");
+    }
+
+	//Já estou invertendo os bits para facilitar
+	while(pos > -1){
+
+		//percorre os bits
+		for (i = 0; i < CHAR_BIT; ++i) {
+	  		//salva em um aray de interiros
+	  		output[i] = (bytes[pos] >> i) & 1;
+	
+			if(IF_DEBUG){
+    			printf("%d",output[i]);
+			}
+
+			if(output[i] == 0){
+				range++;
+			}
+		}
+
+		pos--;
+	}
+
+	if(IF_DEBUG){
+    	printf("\n");
+		printf("sub-sede: %d \n",potencia(2,range));
+		printf("total hosts: %d \n",range);
+    }
+
+	range = potencia(2,range) - 2;
+	
+	return range;
+}
+
 int getip(char *ifname, char *sender_ip){
-	int fd;
+	
+	int fd, ip;
 	struct ifreq ifr;
 
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -42,9 +136,11 @@ int getip(char *ifname, char *sender_ip){
 
 	close(fd);
 
+	ip = ((struct sockaddr_in *)(&ifr.ifr_addr))->sin_addr.s_addr;
+
 	sprintf(sender_ip, "%s", inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr));
 
-	return 0;
+	return ip;
 }
 
 int main(int argc, char *argv[])
@@ -80,6 +176,7 @@ int main(int argc, char *argv[])
 		perror("SIOCGIFINDEX");
 		exit(1);
 	}
+
 
 	/* Obtem o endereco MAC da interface local */
 	memset(&if_mac, 0, sizeof (struct ifreq));
@@ -139,19 +236,37 @@ int main(int argc, char *argv[])
 	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
 	
 	// help vars for multiple sends
-	int i;
+	int i = 0;
+	int range_host = 0;
+	int ip = 0;
 	char sender_ip[15];
 	char target_ip[15];
 
 	char network[15] = "10.0.0.";
 	char host [3];
+	unsigned char target_byte[4];
 
 	// get sender ip
-	getip(ifname, sender_ip);
-	printf("sender: %s\n", sender_ip);
+	ip = getip(ifname, sender_ip);
+
+	//get renge hosts
+	range_host = getrangeip(ifname);
+
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
 
-	for(i=1; i < 255; i++){
+	//ip destinatário fateado
+    target_byte[0] = ip & 0xFF;
+    target_byte[1] = (ip >> 8) & 0xFF;
+    target_byte[2] = (ip >> 16) & 0xFF;
+    target_byte[3] = (ip >> 24) & 0xFF; 
+
+    if(IF_DEBUG){
+	    printf("IP DESTINO FATEADO : %d . %d . %d . %d \n ", target_byte[0], target_byte[1],target_byte[2],target_byte[3]);
+    }
+	
+
+	for(i=1; i < range_host; i++){
+
 		// set host number
 		memset(host, 0, sizeof(host));
 		sprintf(host, "%d", i);
@@ -160,14 +275,15 @@ int main(int argc, char *argv[])
 		memset(target_ip, 0, sizeof(target_ip));
 		strcat(target_ip, network);
 		strcat(target_ip, host);
+		
 
-		printf("target: %s\n", target_ip);
 		inet_pton (AF_INET, target_ip, &arphdr.target_ip);
+		printf("target: %s\n", target_ip);
 
 		memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
 		frame_len += ARP_HDRLEN;
 
-		/* Envia pacote */
+		// Envia pacote 
 		if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
 			perror("send");
 			close(fd);
