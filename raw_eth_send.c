@@ -9,6 +9,7 @@
 #include <netinet/ether.h>
 #include <arpa/inet.h>
 #include <linux/if_packet.h>
+#include <pthread.h>
 
 #define MAC_ADDR_LEN 6
 #define BUFFER_SIZE 1600
@@ -34,6 +35,9 @@ struct _arp_hdr {
   uint8_t target_mac[6];
   uint8_t target_ip[4];
 };
+
+pthread_mutex_t mutex;
+char ifname[IFNAMSIZ];
 
 
 int potencia(int base, int expoente){
@@ -160,7 +164,7 @@ int setArpTable(char *ip, char *mac){
 			str = strtok (NULL, "\t");
 			strcpy(line_mac, str);
 
-			if(strcmp(line_ip, ip) == 0){
+			if(strcmp(line_ip, ip) == 0){     
 				printf("IP conflict\n");
 				found = 1;
 			}		
@@ -178,25 +182,88 @@ int setArpTable(char *ip, char *mac){
 	return 0;
 }
 
-int main(int argc, char *argv[])
+void * discover(void *args)
 {
+	//clear arp table
+	FILE *pFile;
+	pFile = fopen("arp_table.txt", "w");
+	fclose(pFile);
+	char buffer[BUFFER_SIZE];
+	short int ethertype = htons(0x0806);
+	char sender_ip[15];
+
+	printf("Listening to reply packets...\n");
+    //pthread_mutex_unlock(&mutex);
+	while (1) {
+		unsigned char mac_dst[6];
+		unsigned char mac_src[6];
+		//unsigned char *arp;
+		short int e_type;
+		unsigned char ip_sd[4];
+        short op_code;
+		char sender_mac[17];
+        int fd;
+        if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+	        perror("socket");
+	        exit(1);
+        }
+		
+
+		/* Recebe pacotes */
+		if (recv(fd,(char *) &buffer, BUFFER_SIZE, 0) < 0) {
+			perror("recv");
+			close(fd);
+			exit(1);
+		}
+        
+		/* Copia o conteudo do cabecalho Ethernet */
+		memcpy(mac_dst, buffer, sizeof(mac_dst));
+		memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
+		memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
+		e_type = ntohs(e_type);
+		
+		memcpy(ip_sd, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(ip_sd));
+        memcpy(&op_code, buffer+sizeof(mac_dst)+sizeof(mac_src)+(8*sizeof(char)), sizeof(op_code));
+
+		op_code = ntohs(op_code);
+
+		if (htons(e_type) == ethertype && op_code == 2) {
+            printf("opconde:%d\n", op_code);
+			printf("\n--- Received:\n");
+			printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+                        mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
+
+			memset(sender_mac, 0, sizeof(sender_mac));
+			sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
+			printf("MAC origem:  %s\n", sender_mac);
+
+			printf("EtherType: 0x%04x\n", e_type);
+			
+			memset(sender_ip, 0, sizeof(sender_ip));
+			sprintf(sender_ip, "%d.%d.%d.%d", ip_sd[0], ip_sd[1], ip_sd[2], ip_sd[3]);
+			printf("IP sender: %s\n", sender_ip);
+
+			printf("---\n");
+
+			setArpTable(sender_ip, sender_mac);			
+
+		}
+	}
+
+    pthread_exit(NULL);
+}
+
+void * sender(void *args){
 	int fd;
 	struct ifreq if_idx;
 	struct ifreq if_mac;
 	struct sockaddr_ll socket_address;
-	char ifname[IFNAMSIZ];
 	int frame_len = 0;
 	char buffer[BUFFER_SIZE];
 	char dest_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
 	short int ethertype = htons(0x0806);
 
 	arp_hdr arphdr;
-
-	if (argc != 2) {
-		printf("Usage: %s iface\n", argv[0]);
-		return 1;
-	}
-	strcpy(ifname, argv[1]);
 
 	/* Cria um descritor de socket do tipo RAW */
 	if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
@@ -317,60 +384,35 @@ int main(int argc, char *argv[])
 		}
 		frame_len -= ARP_HDRLEN;
 	}
-
-	//clear arp table
-	FILE *pFile;
-	pFile = fopen("arp_table.txt", "w");
-	fclose(pFile);
-
-	printf("Listening to reply packets...\n");
-	while (1) {
-		unsigned char mac_dst[6];
-		unsigned char mac_src[6];
-		//unsigned char *arp;
-		short int e_type;
-		unsigned char ip_sd[4];
-		char sender_mac[17];
-		
-
-		/* Recebe pacotes */
-		if (recv(fd,(char *) &buffer, BUFFER_SIZE, 0) < 0) {
-			perror("recv");
-			close(fd);
-			exit(1);
-		}
-        
-		/* Copia o conteudo do cabecalho Ethernet */
-		memcpy(mac_dst, buffer, sizeof(mac_dst));
-		memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
-		memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
-		e_type = ntohs(e_type);
-		
-		memcpy(ip_sd, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(ip_sd));
-
-		if (htons(e_type) == ethertype) {
-			printf("\n--- Received:\n");
-			printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-                        mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
-
-			memset(sender_mac, 0, sizeof(sender_mac));
-			sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
-			printf("MAC origem:  %s\n", sender_mac);
-
-			printf("EtherType: 0x%04x\n", e_type);
-			
-			memset(sender_ip, 0, sizeof(sender_ip));
-			sprintf(sender_ip, "%d.%d.%d.%d", ip_sd[0], ip_sd[1], ip_sd[2], ip_sd[3]);
-			printf("IP sender: %s\n", sender_ip);
-
-			printf("---\n");
-
-			setArpTable(sender_ip, sender_mac);			
-
-		}
-
-	}
 	
 	close(fd);
-	return 0;
+    pthread_exit(NULL);
 }
+
+int main(int argc, char *argv[])
+{
+    if (argc != 2) {
+		printf("Usage: %s iface\n", argv[0]);
+		return 1;
+	}
+	strcpy(ifname, argv[1]);
+
+    pthread_t thread_dicover;
+    pthread_t thread_sender;
+
+    pthread_mutex_init(&mutex, NULL);
+    //pthread_mutex_lock(&mutex);
+
+    if (pthread_create(&thread_dicover, NULL, discover, NULL) != 0) {
+	    printf("Erro ao criar a thread.\n");
+	    exit(-1);
+    }
+
+    if (pthread_create(&thread_sender, NULL, sender, NULL) != 0) {
+	    printf("Erro ao criar a thread.\n");
+	    exit(-1);
+    }
+    pthread_exit(NULL);
+}
+
+
