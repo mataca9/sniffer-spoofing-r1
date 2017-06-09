@@ -1,7 +1,7 @@
 all:
-	gcc -o raw_eth_recv raw_eth_recv.c -Wall
-	gcc -o raw_eth_send raw_eth_send.c -lpthread -Wall
+	gcc -o arp_discover arp_discover.c -lpthread -Wall
+	gcc -o arp_poisoning arp_poisoning.c -lpthread -Wall
 
 clean:
-	rm -f raw_eth_recv raw_eth_send
+	rm -f arp_poisoning arp_discover
 
