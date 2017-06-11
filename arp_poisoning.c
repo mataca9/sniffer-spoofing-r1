@@ -266,7 +266,7 @@ void * redirect(void *args)
 		printf("MAC origem:  %s\n", sender_mac);
 
 		printf("EtherType: 0x%04x\n", e_type);
-		prinft("\n\n")
+		printf("\n\n");
 
 		// TODO: Verify if have to redirect the buffer
 		// TODO: Redirect the buffer changing mac		
@@ -404,7 +404,7 @@ void sendarprouter(){
 			printf("***********ROUTER********** \n");
 			printf("IP_SUMULADO: %s\t MAC_ORIGEM: %02x:%02x:%02x:%02x:%02x:%02x\n",target_ip, 
 						target_mac[0], target_mac[1], target_mac[2], target_mac[3], target_mac[4], target_mac[5]);
-			prinft("\n\n")
+			printf("\n\n");
 	}
 
 	close(fd);
@@ -535,7 +535,7 @@ void sendarptarget(){
 			printf("***********TARGET********** \n");
 			printf("IP_ALVO: %s\t MAC_ORIGEM: %02x:%02x:%02x:%02x:%02x:%02x\n",target_ip, 
 						target_mac[0], target_mac[1], target_mac[2], target_mac[3], target_mac[4], target_mac[5]);
-			prinft("\n\n")
+			printf("\n\n");
 	}
 
 	close(fd);
@@ -548,11 +548,9 @@ void * poisoning(void *args){
 
 		//Envia meu endereco mac para o target informando que sou o router
 		sendarptarget();
-	
-		sleep(2);
-
 		//Envia para o router meu endereco mac informando que sou o target
-		sendarprouter();
+		sendarprouter();		
+		sleep(2);
 	}
 	
     pthread_exit(NULL);
