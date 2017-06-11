@@ -230,7 +230,9 @@ void * discover(void *args)
 	    	    memcpy(&op_code, buffer+sizeof(mac_dst)+sizeof(mac_src)+(8*sizeof(char)), sizeof(op_code));
 	
 				op_code = ntohs(op_code);
-				if (htons(e_type) == ethertype && op_code == 2) {
+				//if (htons(e_type) == ethertype && op_code == 2) {
+	    	     //Retirei o opcode para podermos pegar o IP e endereco MAC do roteador
+	    	     if (htons(e_type) == ethertype) { 
 	    	        printf("opcode:%d\n", op_code);
 					printf("\n--- Received:\n");
 					printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
