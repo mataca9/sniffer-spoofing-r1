@@ -181,6 +181,8 @@ int setArpTable(char *ip, char *mac){
 		}
 
 		fclose(pFile);
+	}else{
+		fclose(pFile);
 	}
 
 	return 0;
@@ -215,6 +217,8 @@ void getmactarget(char *ip,int find_router){
 		}
 
 		fclose(pFile);
+	}else{
+		fclose(pFile);
 	}
 
 	if(IF_DEBUG){
@@ -238,6 +242,8 @@ void * redirect(void *args)
 		//unsigned char *arp;
 		short int e_type;
 		char sender_mac[17];
+		char destination_ip[15];
+		unsigned char dest_ip[4];
         int fd;
         if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
 	        perror("socket");
@@ -255,23 +261,37 @@ void * redirect(void *args)
 		memcpy(mac_dst, buffer, sizeof(mac_dst));
 		memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
 		memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
+
+		// tenta capturar ip
+		memcpy(dest_ip, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(dest_ip));
 		e_type = ntohs(e_type);
 
-		printf("\n--- Received:\n");
-		printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-					mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
 
-		memset(sender_mac, 0, sizeof(sender_mac));
-		sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
-		printf("MAC origem:  %s\n", sender_mac);
+		// verifica header ip
+		if(e_type == htons(0x0800)){		
 
-		printf("EtherType: 0x%04x\n", e_type);
-		printf("\n\n");
+			printf("\n--- Received:\n");
+			printf("IP destino: %d.%d.%d.%d\n", 
+						dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3]);
+			printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+						mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
 
-		// TODO: Verify if have to redirect the buffer
-		// TODO: Redirect the buffer changing mac		
+			memset(sender_mac, 0, sizeof(sender_mac));
+			sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
+			printf("MAC origem:  %s\n", sender_mac);
 
-		printf("---\n");
+			printf("EtherType: 0x%04x\n", e_type);
+			printf("\n\n");
+
+			// Verify if have to redirect the buffer
+			sprintf(destination_ip, "%d.%d.%d.%d", dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3]);
+			if(strcmp(target_ip, destination_ip) == 0){
+				// TODO: Redirect the buffer changing mac
+			}
+
+			printf("---\n");
+		}
+
 	}
 
     pthread_exit(NULL);
@@ -402,14 +422,12 @@ void sendarprouter(){
 
 	if(IF_DEBUG){
 			printf("***********ROUTER********** \n");
-			printf("IP_SUMULADO: %s\t MAC_ORIGEM: %02x:%02x:%02x:%02x:%02x:%02x\n",target_ip, 
+			printf("IP_SIMULADO: %s\t MAC_ORIGEM: %02x:%02x:%02x:%02x:%02x:%02x\n",target_ip, 
 						target_mac[0], target_mac[1], target_mac[2], target_mac[3], target_mac[4], target_mac[5]);
 			printf("\n\n");
 	}
 
 	close(fd);
-
-
 }
 
 
