@@ -297,7 +297,7 @@ void sendLierArp(uint8_t mac, unsigned char * mac_b, char * sender_ip, char * ta
    /* Indice da interface de rede */
 	socket_address.sll_ifindex = if_idx.ifr_ifindex;
 	/* Tamanho do endereco (ETH_ALEN = 6) */
-	socket_address.sll_halen = ETH_ALEN;;
+	socket_address.sll_halen = ETH_ALEN;
 
 
 	// Set origin and destination	

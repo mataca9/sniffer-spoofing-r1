@@ -164,7 +164,6 @@ int setArpTable(char *ip, char *mac){
 			strcpy(line_mac, str);
 
 			if(strcmp(line_ip, ip) == 0){     
-				printf("IP conflict\n");
 				found = 1;
 			}		
 		}
@@ -230,10 +229,7 @@ void * discover(void *args)
 	    	    memcpy(&op_code, buffer+sizeof(mac_dst)+sizeof(mac_src)+(8*sizeof(char)), sizeof(op_code));
 	
 				op_code = ntohs(op_code);
-				//if (htons(e_type) == ethertype && op_code == 2) {
-	    	     //Retirei o opcode para podermos pegar o IP e endereco MAC do roteador
-	    	     if (htons(e_type) == ethertype) { 
-	    	        printf("opcode:%d\n", op_code);
+	    	    if (htons(e_type) == ethertype && op_code == 2) { 
 					printf("\n--- Received:\n");
 					printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
 	    	                    mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
@@ -251,14 +247,9 @@ void * discover(void *args)
 					printf("---\n");
 	
 					setArpTable(sender_ip, sender_mac);			
-	
-					printf("saiu do if\n");
-			
 				}
 			}
 	}
-	
-	printf("saiu da busca\n");
 
     pthread_exit(NULL);
 }
