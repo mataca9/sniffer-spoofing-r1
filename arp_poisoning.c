@@ -286,13 +286,6 @@ int getMac(char * ip, uint8_t * mac){
 	/* OpCode: 1 for ARP request */
 	arp_aux.opcode = htons (1);
 
-	/* Sender hardware address (48 bits): MAC address */
-	
-	// if(if_mac.ifr_hwaddr.sa_data[3] > 0xffffff00){
-	// 	printf("tretta mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00);
-	// 	if_mac.ifr_hwaddr.sa_data[3] = if_mac.ifr_hwaddr.sa_data[3] % 0xffffff00;
-	// }
-	// printf("now mac: %.02x\n", if_mac.ifr_hwaddr.sa_data[3]);
 
 	memcpy (&arp_aux.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
 	/* Target hardware address (48 bits): zero, since we don't know it yet. */
@@ -342,13 +335,8 @@ int getMac(char * ip, uint8_t * mac){
     	    memcpy(&op_code, buffer+sizeof(mac_dst)+sizeof(mac_src)+(8*sizeof(char)), sizeof(op_code));
 
 			op_code = ntohs(op_code);
-			//if (htons(e_type) == ethertype && op_code == 2) {
     	    
-    	    	 if (htons(e_type) == ethertype) {
-
-
-    	        //printf("MAC destino: %02x:%02x:%02x:%02x:%02x:%02x\n", 
-    	        //            mac_dst[0], mac_dst[1], mac_dst[2], mac_dst[3], mac_dst[4], mac_dst[5]);
+ 	    	 if (htons(e_type) == ethertype) {
 
 				memset(sender_mac, 0, sizeof(sender_mac));
 				sprintf(sender_mac, " %02x:%02x:%02x:%02x:%02x:%02x", mac_src[0], mac_src[1], mac_src[2], mac_src[3], mac_src[4], mac_src[5]);
@@ -358,9 +346,6 @@ int getMac(char * ip, uint8_t * mac){
 				
 
 				if(strcmp(sender_ip,ip) == 0){
-		
-					printf("IP sender: %s\n", sender_ip);
-					printf("MAC sender: %s\n", sender_mac);
 
 					memcpy(&mac, mac_src, sizeof(mac_src));
 				
@@ -381,7 +366,7 @@ int getMac(char * ip, uint8_t * mac){
 
 void sendarprouter(){
 
-	int fd;
+	int fdy;
 	struct ifreq if_idx;
 	struct ifreq if_mac;
 	struct sockaddr_ll socket_address;
@@ -393,7 +378,7 @@ void sendarprouter(){
 	arp_hdr arphdr_router;
 
 	/* Cria um descritor de socket do tipo RAW */
-	if ((fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+	if ((fdy = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
 		perror("socket");
 		exit(1);
 	}
@@ -401,7 +386,7 @@ void sendarprouter(){
 	/* Obtem o indice da interface de rede */
 	memset(&if_idx, 0, sizeof (struct ifreq));
 	strncpy(if_idx.ifr_name, ifname, IFNAMSIZ - 1);
-	if (ioctl(fd, SIOCGIFINDEX, &if_idx) < 0) {
+	if (ioctl(fdy, SIOCGIFINDEX, &if_idx) < 0) {
 		perror("SIOCGIFINDEX");
 		exit(1);
 	}
@@ -410,7 +395,7 @@ void sendarprouter(){
 	/* Obtem o endereco MAC da interface local */
 	memset(&if_mac, 0, sizeof (struct ifreq));
 	strncpy(if_mac.ifr_name, ifname, IFNAMSIZ - 1);
-	if (ioctl(fd, SIOCGIFHWADDR, &if_mac) < 0) {
+	if (ioctl(fdy, SIOCGIFHWADDR, &if_mac) < 0) {
 		perror("SIOCGIFHWADDR");
 		exit(1);
 	}
@@ -445,7 +430,7 @@ void sendarprouter(){
 	/* Tamanho do endereco (ETH_ALEN = 6) */
 	socket_address.sll_halen = ETH_ALEN;
 	/* Endereco MAC de destino */
-	memcpy(socket_address.sll_addr, target_mac_router, MAC_ADDR_LEN);
+	//memcpy(socket_address.sll_addr, target_mac_router, MAC_ADDR_LEN);
 	
 
 	/*============== MONTA CABECALHO ARP =========*/
@@ -465,8 +450,8 @@ void sendarprouter(){
 	/* VERIFICAR COM O PROFESSOR, NAO CONSEGUI INFORMAR O MAC DO DESTINATARIO 
 	   Target hardware address destino  */
 
-	printf("sendarprouter =>  %s  \n",target_ip);
-	getMac(target_ip,arphdr_router.target_mac);
+	printf("sendarprouter =>  %s  \n",sender_ip);
+	getMac(sender_ip,arphdr_router.target_mac);
 
 
 	/*==== AQUI ESTA O TOQUE ME VOI ===*/
@@ -496,14 +481,14 @@ void sendarprouter(){
 
 
 	// Envia pacote 
-	if (sendto(fd, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+	if (sendto(fdy, buffer, frame_len, 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
 		perror("send");
-		close(fd);
+		close(fdy);
 		exit(1);
 	}
 
 
-	close(fd);
+	close(fdy);
 }
 
 
@@ -588,16 +573,16 @@ void sendarptarget(){
 	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
 
 
-	printf("sendarptarget =>  %s  \n",sender_ip);
 	//informa seta o mac do destinatario
-	getMac(sender_ip, arphdr.target_mac);
+	getMac(target_ip, arphdr.target_mac);
 	
 
 	printf("sendarptarget => IP DO ROTEADOR %s \n", sender_ip);
 
+	printf("sendarptarget => IP DO TARGET %s \n", target_ip);
+
 	//salva o ip do roteador como se ele tivesse enviado
 	inet_pton (AF_INET, sender_ip, &arphdr.sender_ip);
-	//inet_pton (AF_INET, target_ip, &arphdr.sender_ip);
 	//Informa o ip alvo que recebe o pacote
 	inet_pton (AF_INET, target_ip, &arphdr.target_ip);
 
