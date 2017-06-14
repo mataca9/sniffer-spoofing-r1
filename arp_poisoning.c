@@ -267,6 +267,12 @@ void sendLierArp(uint8_t mac, unsigned char * mac_b, char * sender_ip, char * ta
 		exit(1);
 	}
 
+		// Set origin and destination	
+	for(i=0; i < 6; i++){
+		dest_mac[i] = mac_b[i];
+		origin_mac[i] = if_mac.ifr_hwaddr.sa_data[i];
+	}
+
 	/*============== MONTA CABECALHO ARP =========*/
 	/* Hardware type (16 bits): 1 for ethernet */
 	arphdr.htype = htons (1);
@@ -282,7 +288,7 @@ void sendLierArp(uint8_t mac, unsigned char * mac_b, char * sender_ip, char * ta
 	memcpy (&arphdr.sender_mac, if_mac.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
 	//informa seta o mac do destinatario
 
-	memset(&arphdr.target_mac, mac, sizeof(arphdr.target_mac));
+	memcpy(&arphdr.target_mac, dest_mac, 6 * sizeof (uint8_t));
 
 	printf("sendLierArp => MENTINDO IP %s \n", sender_ip);
 	printf("sendLierArp => ALVO %s \n", target_ip);
@@ -299,12 +305,6 @@ void sendLierArp(uint8_t mac, unsigned char * mac_b, char * sender_ip, char * ta
 	/* Tamanho do endereco (ETH_ALEN = 6) */
 	socket_address.sll_halen = ETH_ALEN;
 
-
-	// Set origin and destination	
-	for(i=0; i < 6; i++){
-		dest_mac[i] = mac_b[i];
-		origin_mac[i] = if_mac.ifr_hwaddr.sa_data[i];
-	}	
 
 	/*============= PREENCHE BUFFER ==============*/
 	/* Preenche o buffer com 0s */
